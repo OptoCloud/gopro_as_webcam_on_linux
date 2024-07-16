@@ -32,8 +32,6 @@ globals() {
     # TODO: Use GOPRO_ prefix
     # TODO: rename AUTO -> NONINTERACTIVE
     GOPRO_NON_INTERACTIVE=${GOPRO_NON_INTERACTIVE:-0}
-    GOPRO_AUTOSTART=${GOPRO_AUTOSTART:-0}
-    GOPRO_PREVIEW=${GOPRO_PREVIEW:-0}
     GOPRO_RESOLUTION=${GOPRO_RESOLUTION:-1080}
     GOPRO_CROP=${GOPRO_CROP}
     GOPRO_FOV_ID=${GOPRO_FOV_ID:-4}
@@ -43,11 +41,6 @@ globals() {
     GOPRO_IP=${GOPRO_IP}
     GOPRO_USER=${GOPRO_USER}
 }
-
-DEPS=( "ffmpeg" "curl" )
-module="v4l2loopback"
-module_cmd="modprobe v4l2loopback exclusive_caps=1 card_label='GoPro' video_nr=42"
-module_cmd_unload="modprobe -rf v4l2loopback"
 
 START_PATH="/gp/gpWebcam/START?res="
 # TODO: seems buggy atm, though
@@ -61,8 +54,6 @@ function run_args {
     >&2 echo "       Launch Options     "
     >&2 echo "=========================="
     >&2 echo " * Non-interactive:  $GOPRO_NON_INTERACTIVE"
-    >&2 echo " * Autostart:        $GOPRO_AUTOSTART"
-    >&2 echo " * Preview:          $GOPRO_PREVIEW"
     >&2 echo " * Resolution:       ${GOPRO_RESOLUTION}p"
     if [[ $GOPRO_CROP ]]; then
     >&2 echo " * Crop:             $GOPRO_CROP"
@@ -93,16 +84,6 @@ function validate_arguments {
 
     if [[ $GOPRO_DEVICE ]] || [[ $GOPRO_DEVICE_PATTERN ]] && [[ $GOPRO_IP ]]; then
         yellow "When an IP is provided the options for -p | --device-pattern and -d | --device ignored"
-    fi
-
-    if [[ ${GOPRO_AUTOSTART} -eq 1 ]] && [[ ${GOPRO_PREVIEW} -eq 1 ]]; then
-        red "-v | --preview and -a | --autostart are mutually exclusive"
-        exit 1
-    fi
-
-    if [[ ${GOPRO_PREVIEW} -eq 1 ]] && [[ ! $GOPRO_USER ]]; then
-        red "-r | --preview needs -u | --user. Please provide it with the mentioned flags"
-        exit 1
     fi
     
     if [[ ${GOPRO_FOV} == "wide" ]]; then
@@ -144,11 +125,6 @@ Options:
 
   -i,  --ip                provide a IPv4 address to the GoPro i.e. (172.27.187.52)
                            CAUTION! This may change over time.
-  
-  -a,  --auto-start        automatically start ffmpeg to serve the GoPro as a video device to your operating system.
-                           If this flag is omitted, print the corresponding command to run it yourself. 
-
-  -v,  --preview           Just launch a preview in VLC. This will not expose the device to the OS.
 
   -u,  --user              VLC can't be started as root, please provide a username you want to run it with. (Typically your 'default/home' user)
 
@@ -205,13 +181,6 @@ function parse_args {
         GOPRO_USER=$2
         shift
         ;;
-      -a|--auto-start)
-        GOPRO_AUTOSTART=1
-        ;;
-      -v|--preview)
-        DEPS+=('vlc')
-        GOPRO_PREVIEW=1
-        ;;
       -)
         _EXTRA_ARGS+=("$(cat $2)")
         _RAW_INPUT=1
@@ -244,47 +213,6 @@ function test_DEPS {
             exit 1
         fi
     done
-}
-
-function user_confirmation {
-    if [ $GOPRO_NON_INTERACTIVE -ne 1 ] ; then
-        read -p "Please plug in your GoPro and switch it on. If it booted successfully (Charger icon on screen), hit Return"
-    fi
-}
-
-function test_module_probe {
-    # load module
-    if ${module_cmd} &> /dev/null ; then
-        green "${module} was successfully loaded."
-        return 0
-    else
-        red "${module} does not exist. Please either install ${module} or get it from source via https://github.com/umlaeute/v4l2loopback"
-        exit 1
-    fi
-}
-
-function test_module_unload {
-    # unload module
-    if ${module_cmd_unload} &> /dev/null ; then
-        green "${module} was unloaded successfully."
-        return 0
-    else
-        red "${module} could not be unloaded. There is maybe an ffmpeg(or similar) running that uses this module"
-        exit 1
-    fi
-
-}
-
-function test_module_loaded { 
-    # test if module is already loaded
-    if lsmod | grep ${module} &> /dev/null ; then
-        green "${module} is loaded!"
-        test_module_unload
-        return 0
-    else
-        green "${module} is not loaded!"
-        return 1
-    fi
 }
 
 function discover_device {
@@ -370,35 +298,6 @@ function start_webcam {
 
     start_gopro_webcam_mode
 
-    expose_device
-}
-
-function expose_device {
-
-    if [[ ${GOPRO_AUTOSTART} -eq 1 ]]; then
-        echo "Starting ffmpeg.."
-        CROP=""
-        if [ -n "${GOPRO_CROP}" ]; then
-            CROP=",crop=${GOPRO_CROP}"
-        fi
-        ffmpeg -nostdin -threads 1 -i 'udp://@0.0.0.0:8554?overrun_nonfatal=1&fifo_size=50000000' -f:v mpegts -fflags nobuffer -vf format="yuv420p${CROP}" -f v4l2 /dev/video42
-    elif [[ ${GOPRO_PREVIEW} -eq 1 ]]; then
-        echo "Starting preview.."
-        start_preview
-        exit 0
-    else
-        info_only
-        exit 0
-    fi
-}
-
-function start_preview {
-
-    echo -e "To test this try this command(vlc needs to be installed): \n"
-    sudo -u $GOPRO_USER vlc -vvv --network-caching=300 --sout-x264-preset=ultrafast --sout-x264-tune=zerolatency --sout-x264-vbv-bufsize 0 --sout-transcode-threads 4 --no-audio udp://@:8554
-}
-
-function info_only {
     echo -e "\n\nYou should be ready to use your GoPro on your prefered videostreaming tool. Have Fun!"
 
     echo -e "\n\nIf you want to use the GoPro in your prefered Video conferencing software (browser and apps works alike) pipe the UDP stream to a video device (that was created already) with this command: \n"
@@ -422,15 +321,6 @@ main() {
     webcam)
         # check if sudo/root
         permission_check
-
-        # If module is loaded already, unload it, to maintain idempotency.
-        test_module_loaded
-
-        # modprobe the needed kernel module
-        test_module_probe
-
-        # prompt to plug in the cable and turn on the device
-        user_confirmation
 
         # Try to detect the correct interface and start the webcam mode
         start_webcam

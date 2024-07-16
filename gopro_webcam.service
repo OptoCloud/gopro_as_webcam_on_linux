@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target systemd-networkd-wait-online.service
 
 [Service]
-ExecStart=/usr/local/sbin/gopro webcam -a -n
+ExecStart=/usr/local/sbin/gopro webcam -n -r 1080 -f wide
 Restart=on-failure
 RestartSec=15s
 
